@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MQTTGO.io 網頁服務 & LED 控制儀表板</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- MQTT.js Library -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            900: '#312e81',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .led-off {
+            background: radial-gradient(circle at 30% 30%, #334155, #0f172a);
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.8), 0 0 5px rgba(0,0,0,0.5);
+            border: 3px solid #1e293b;
+        }
+
+        .led-on {
+            background: radial-gradient(circle at 30% 30%, #4ade80, #16a34a);
+            box-shadow: 
+                inset 0 2px 4px rgba(255,255,255,0.8),
+                0 0 20px #22c55e,
+                0 0 40px #22c55e,
+                0 0 60px rgba(34, 197, 94, 0.6);
+            border: 3px solid #86efac;
+            animation: pulse-glow 2s infinite alternate;
+        }
+
+        @keyframes pulse-glow {
+            0% {
+                box-shadow: 
+                    inset 0 2px 4px rgba(255,255,255,0.8),
+                    0 0 15px #22c55e,
+                    0 0 30px #22c55e;
+            }
+            100% {
+                box-shadow: 
+                    inset 0 2px 4px rgba(255,255,255,0.9),
+                    0 0 25px #22c55e,
+                    0 0 50px #22c55e;
+            }
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #090d16;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #1e293b;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #334155;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
+
+    <!-- Navigation Header -->
+    <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="p-2 bg-indigo-600/20 rounded-xl text-indigo-400 border border-indigo-500/30">
+                    <i class="fa-solid fa-network-wired text-xl"></i>
+                </div>
+                <div>
+                    <div class="flex items-center space-x-2">
+                        <h1 class="text-xl font-bold bg-gradient-to-r from-indigo-400 via-purple-300 to-pink-400 bg-clip-text text-transparent">
+                            MQTTGO.io 網頁服務
+                        </h1>
+                        <span class="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-500/30 font-mono">v2.0</span>
+                    </div>
+                    <p class="text-xs text-slate-400 hidden sm:block">IoT 裝置測試與多功能控制儀表板</p>
+                </div>
+            </div>
+
+            <!-- Header Right Section -->
+            <div class="flex items-center space-x-4">
+                <a href="https://mqttgo.vip/" target="_blank" rel="noopener noreferrer" 
+                   class="hidden md:flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-amber-400 bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 transition-all">
+                    <i class="fa-solid fa-crown text-amber-400"></i>
+                    <span>MQTTGO VIP 服務</span>
+                </a>
+
+                <!-- Connection Status Indicator -->
+                <div id="statusBadge" class="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-medium">
+                    <span class="relative flex h-2.5 w-2.5">
+                        <span id="statusPing" class="hidden"></span>
+                        <span id="statusDot" class="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+                    </span>
+                    <span id="statusText">未連線</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+        <!-- Section 1: 連線伺服器 Connect Server -->
+        <section class="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-xl backdrop-blur relative overflow-hidden">
+            <div class="flex items-center justify-between border-b border-slate-800/80 pb-3 mb-4">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-server text-indigo-400"></i>
+                    <h2 class="text-base font-bold text-slate-100">連線伺服器 Connect server</h2>
+                </div>
+                <div class="flex items-center space-x-2 text-xs text-slate-400">
+                    <span class="hidden sm:inline">Dashboard 技術 Powered By 法蘭斯</span>
+                    <button type="button" onclick="toggleAdvancedSettings()" class="text-indigo-400 hover:underline">
+                        <i class="fa-solid fa-sliders mr-1"></i><span id="advToggleText">顯示進階設定</span>
+                    </button>
+                </div>
+            </div>
+
+            <form id="connectForm" onsubmit="handleConnectSubmit(event)">
+                <!-- Primary Connection Inputs Grid -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">MQTT Broker 郵局</label>
+                        <input type="text" id="brokerHost" value="mqttgo.io" required
+                            class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-indigo-500 transition-colors">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">WSS Port (網頁專用)</label>
+                        <input type="number" id="brokerWssPort" value="8084" required
+                            class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-indigo-500 transition-colors">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">MQTT Port (原生參考)</label>
+                        <input type="text" value="1883" disabled
+                            class="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-500 font-mono cursor-not-allowed">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">ClientID 編號</label>
+                        <input type="text" id="clientId" value="MQTTGO-9511964930" required
+                            class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-emerald-400 font-mono focus:outline-none focus:border-indigo-500 transition-colors">
+                    </div>
+                </div>
+
+                <!-- Collapsible Advanced Settings -->
+                <div id="advancedSettings" class="hidden mt-4 pt-4 border-t border-slate-800/60 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 bg-slate-950/40 p-4 rounded-xl border border-slate-800/40">
+                    <div class="flex items-center space-x-3 pt-4">
+                        <label class="flex items-center cursor-pointer space-x-2 text-xs font-medium text-slate-300">
+                            <input type="checkbox" id="sslEnable" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+                            <span>SSL 安全傳輸 (wss://)</span>
+                        </label>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">Keep Alive (秒)</label>
+                        <input type="number" id="keepAlive" value="60"
+                            class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-sm font-mono focus:outline-none focus:border-indigo-500">
+                    </div>
+
+                    <div class="flex items-center space-x-3 pt-4">
+                        <label class="flex items-center cursor-pointer space-x-2 text-xs font-medium text-slate-300">
+                            <input type="checkbox" id="cleanSession" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+                            <span>Clean Session (全新會話)</span>
+                        </label>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">Last-Will Topic (遺言主題)</label>
+                        <input type="text" id="willTopic" placeholder="可留空"
+                            class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-sm font-mono focus:outline-none focus:border-indigo-500">
+                    </div>
+
+                    <div class="sm:col-span-2 lg:col-span-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Last-Will QoS</label>
+                            <select id="willQos" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-sm">
+                                <option value="0">0 - At most once</option>
+                                <option value="1">1 - At least once</option>
+                                <option value="2">2 - Exactly once</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Last-Will Retain</label>
+                            <select id="willRetain" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-sm">
+                                <option value="false">false</option>
+                                <option value="true">true</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Last-Will Message (遺言訊息)</label>
+                            <input type="text" id="willMessage" placeholder="Offline"
+                                class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-sm font-mono focus:outline-none focus:border-indigo-500">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Connect / Disconnect Buttons Bar -->
+                <div class="mt-5 flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex items-center space-x-3">
+                        <button type="submit" id="btnConnect"
+                            class="px-6 py-2.5 rounded-xl font-bold text-white bg-indigo-600 hover:bg-indigo-500 border border-indigo-500/50 shadow-lg shadow-indigo-950/40 active:scale-95 transition-all flex items-center space-x-2">
+                            <i id="connectBtnIcon" class="fa-solid fa-plug"></i>
+                            <span id="connectBtnText">連線</span>
+                        </button>
+
+                        <button type="button" id="btnDisconnect" onclick="disconnectMqtt()" disabled
+                            class="px-6 py-2.5 rounded-xl font-bold text-slate-400 bg-slate-800/50 hover:bg-slate-800 border border-slate-700/60 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center space-x-2">
+                            <i class="fa-solid fa-power-off"></i>
+                            <span>中斷</span>
+                        </button>
+                    </div>
+
+                    <button type="button" onclick="saveDashboardSettings()" 
+                        class="px-4 py-2.5 rounded-xl font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 border border-slate-700 active:scale-95 transition-all text-xs flex items-center space-x-2">
+                        <i class="fa-solid fa-floppy-disk text-indigo-400"></i>
+                        <span>Dashboard 儲存</span>
+                    </button>
+                </div>
+            </form>
+        </section>
+
+        <!-- Main Grid Section: Left (Publish & LED) / Right (Subscriptions & Quick Dash) -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+            <!-- Left 7 Cols: LED Control & General Publish -->
+            <div class="lg:col-span-7 space-y-6">
+
+                <!-- Interactive LED Control Box -->
+                <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden flex flex-col items-center">
+                    <div class="w-full flex items-center justify-between mb-4 border-b border-slate-800/80 pb-3">
+                        <div class="flex items-center space-x-2">
+                            <i class="fa-solid fa-lightbulb text-amber-400"></i>
+                            <h3 class="text-sm font-bold text-slate-100">LED 開關控制中心</h3>
+                        </div>
+                        <span class="text-xs font-mono bg-slate-950 text-indigo-300 px-3 py-1 rounded-full border border-indigo-500/20">
+                            Topic: elec4f321/light/LED1
+                        </span>
+                    </div>
+
+                    <!-- Glowing Visual LED Bulb -->
+                    <div class="my-6 flex flex-col items-center">
+                        <div id="ledBulb" class="w-32 h-32 sm:w-40 sm:h-40 rounded-full led-off flex items-center justify-center transition-all duration-300">
+                            <i id="ledBulbIcon" class="fa-solid fa-lightbulb text-5xl sm:text-6xl text-slate-600 transition-colors duration-300"></i>
+                        </div>
+                        <div class="mt-5 text-center">
+                            <h4 id="ledStateText" class="text-2xl font-bold tracking-tight text-slate-400">熄滅中 (OFF)</h4>
+                            <p class="text-xs text-slate-500 mt-1">控制主題: <code class="text-slate-400 font-mono">elec4f321/light/LED1</code></p>
+                        </div>
+                    </div>
+
+                    <!-- Quick Control Buttons -->
+                    <div class="w-full grid grid-cols-3 gap-3 mt-2">
+                        <button type="button" onclick="sendLedCommand('on')"
+                            class="py-3 px-4 rounded-xl font-bold text-white bg-emerald-600 hover:bg-emerald-500 active:scale-95 transition-all shadow-lg shadow-emerald-950/40 border border-emerald-500/50 flex items-center justify-center space-x-2">
+                            <i class="fa-solid fa-bolt"></i>
+                            <span>開啟 (on)</span>
+                        </button>
+
+                        <button type="button" onclick="sendLedCommand('off')"
+                            class="py-3 px-4 rounded-xl font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 active:scale-95 transition-all border border-slate-700 flex items-center justify-center space-x-2">
+                            <i class="fa-solid fa-power-off"></i>
+                            <span>關閉 (off)</span>
+                        </button>
+
+                        <button type="button" onclick="toggleLedCommand()"
+                            class="py-3 px-4 rounded-xl font-bold text-indigo-200 bg-indigo-950/80 hover:bg-indigo-900 active:scale-95 transition-all border border-indigo-700/50 flex items-center justify-center space-x-2">
+                            <i class="fa-solid fa-rotate"></i>
+                            <span>切換 (TOGGLE)</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 推播 Publish Section -->
+                <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+                    <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                        <div class="flex items-center space-x-2">
+                            <i class="fa-solid fa-paper-plane text-indigo-400"></i>
+                            <h3 class="text-base font-bold text-slate-100">推播 Publish</h3>
+                        </div>
+                        <span class="text-xs text-slate-400">通用 MQTT 訊息發送</span>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div class="sm:col-span-2">
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">推播主題 Topic</label>
+                            <input type="text" id="pubTopic" value="elec4f321/light/LED1" required
+                                class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-indigo-500">
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-400 mb-1">QoS</label>
+                                <select id="pubQos" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-2 text-sm">
+                                    <option value="0">0</option>
+                                    <option value="1">1</option>
+                                    <option value="2">2</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-400 mb-1">Retain</label>
+                                <select id="pubRetain" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-2 py-2 text-sm">
+                                    <option value="false">false</option>
+                                    <option value="true">true</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">訊息內容 Payload</label>
+                        <div class="flex gap-2">
+                            <input type="text" id="pubMessage" value="on" placeholder="請輸入要發送的訊息內容"
+                                class="flex-grow bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 font-mono focus:outline-none focus:border-indigo-500">
+                            <button type="button" onclick="publishCustomMessage()"
+                                class="px-5 py-2.5 rounded-xl font-bold text-white bg-indigo-600 hover:bg-indigo-500 active:scale-95 transition-all border border-indigo-500 flex items-center space-x-2">
+                                <i class="fa-solid fa-paper-plane text-xs"></i>
+                                <span>Publish</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Right 5 Cols: Subscriptions & Dashboard Settings -->
+            <div class="lg:col-span-5 space-y-6">
+
+                <!-- 訂閱 Subscriptions Section -->
+                <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+                    <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                        <div class="flex items-center space-x-2">
+                            <i class="fa-solid fa-rss text-indigo-400"></i>
+                            <h3 class="text-base font-bold text-slate-100">訂閱 Subscriptions</h3>
+                        </div>
+                        <span class="text-xs text-slate-400">新增或移除主題監聽</span>
+                    </div>
+
+                    <!-- Add Subscription Form -->
+                    <form onsubmit="handleAddSubscription(event)" class="space-y-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">新增訂閱主題 (Topic)</label>
+                            <input type="text" id="subTopicInput" value="elec4f321/light/LED1" required
+                                class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm font-mono text-slate-100 focus:outline-none focus:border-indigo-500">
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-400 mb-1">QoS 服務品質</label>
+                                <select id="subQosSelect" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm">
+                                    <option value="0">0 (最多一次)</option>
+                                    <option value="1">1 (至少一次)</option>
+                                    <option value="2">2 (恰好一次)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-400 mb-1">標籤顏色</label>
+                                <select id="subColorSelect" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm">
+                                    <option value="indigo">藍紫色 Indigo</option>
+                                    <option value="emerald">翡翠綠 Emerald</option>
+                                    <option value="amber">琥珀黃 Amber</option>
+                                    <option value="rose">玫瑰紅 Rose</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <button type="submit"
+                            class="w-full py-2.5 rounded-xl font-bold text-slate-100 bg-slate-800 hover:bg-slate-700 border border-slate-700 active:scale-95 transition-all flex items-center justify-center space-x-2">
+                            <i class="fa-solid fa-plus text-indigo-400"></i>
+                            <span>Subscribe (新增訂閱)</span>
+                        </button>
+                    </form>
+
+                    <!-- Active Subscriptions List -->
+                    <div class="pt-2">
+                        <h4 class="text-xs font-semibold text-slate-400 mb-2">已訂閱主題列表：</h4>
+                        <div id="subList" class="space-y-2 max-h-48 overflow-y-auto pr-1">
+                            <!-- JS Dynamically populates this -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 儀表板 Dashboard Section -->
+                <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+                    <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                        <div class="flex items-center space-x-2">
+                            <i class="fa-solid fa-gauge-high text-indigo-400"></i>
+                            <h3 class="text-base font-bold text-slate-100">儀表板 Dashboard</h3>
+                        </div>
+                        <span class="text-xs text-emerald-400 font-mono" id="dashSyncStatus">與 MQTTGO 同步</span>
+                    </div>
+
+                    <!-- Widget Selector / Creator -->
+                    <div class="space-y-3 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="block text-[11px] font-semibold text-slate-400 mb-1">Widget 種類</label>
+                                <select id="widgetType" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs">
+                                    <option value="switch" selected>滑動開關 (LED)</option>
+                                    <option value="text">文字方塊</option>
+                                    <option value="gauge">類比儀表</option>
+                                    <option value="temp">溫度圖</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-semibold text-slate-400 mb-1">名稱 (不可重複)</label>
+                                <input type="text" id="widgetName" value="LED1 控制" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs font-mono">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="block text-[11px] font-semibold text-slate-400 mb-1">數值區間 (min,max)</label>
+                                <input type="text" id="widgetRange" value="0,100" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs font-mono">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-semibold text-slate-400 mb-1">單位 Unit</label>
+                                <input type="text" id="widgetUnit" value="狀態" class="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs font-mono">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Visual Widgets Container -->
+                    <div class="space-y-3">
+                        <!-- Switch Widget Card -->
+                        <div class="p-4 bg-slate-950/80 rounded-xl border border-slate-800 flex items-center justify-between">
+                            <div class="flex items-center space-x-3">
+                                <div class="p-2.5 bg-indigo-500/10 text-indigo-400 rounded-lg border border-indigo-500/20">
+                                    <i class="fa-solid fa-toggle-on text-lg"></i>
+                                </div>
+                                <div>
+                                    <div class="text-sm font-bold text-slate-200">LED1 開關狀態</div>
+                                    <div class="text-xs text-slate-500 font-mono">elec4f321/light/LED1</div>
+                                </div>
+                            </div>
+                            
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="dashToggleSwitch" onchange="handleDashToggleChange()" class="sr-only peer">
+                                <div class="w-12 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                            </label>
+                        </div>
+
+                        <!-- Text Readout Card -->
+                        <div class="p-4 bg-slate-950/80 rounded-xl border border-slate-800 flex items-center justify-between">
+                            <div class="flex items-center space-x-3">
+                                <div class="p-2.5 bg-emerald-500/10 text-emerald-400 rounded-lg border border-emerald-500/20">
+                                    <i class="fa-solid fa-terminal text-lg"></i>
+                                </div>
+                                <div>
+                                    <div class="text-sm font-bold text-slate-200">最後收到訊息 (文字方塊)</div>
+                                    <div class="text-xs text-slate-500 font-mono">Payload Readout</div>
+                                </div>
+                            </div>
+                            <span id="dashLastPayload" class="font-mono text-sm font-bold px-3 py-1 bg-slate-900 text-emerald-400 rounded-md border border-slate-800">
+                                無數據
+                            </span>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Section 3: 訊息傳輸與數據日誌 Message Console Log -->
+        <section class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col space-y-3">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-list-check text-indigo-400"></i>
+                    <h3 class="text-base font-bold text-slate-100">訊息與封包傳輸日誌 (Message Log)</h3>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <label class="flex items-center space-x-1.5 text-xs text-slate-400 cursor-pointer">
+                        <input type="checkbox" id="autoScroll" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+                        <span>自動滾動</span>
+                    </label>
+                    <button type="button" onclick="clearConsoleLogs()" class="text-xs text-slate-400 hover:text-rose-400 transition-colors flex items-center space-x-1">
+                        <i class="fa-solid fa-trash-can"></i>
+                        <span>清除紀錄</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Terminal Window -->
+            <div id="logConsole" class="h-64 bg-slate-950 rounded-xl p-4 font-mono text-xs overflow-y-auto space-y-2 border border-slate-800/80 shadow-inner">
+                <div class="text-slate-500">[系統初始化] 網頁載入完成，預設 Broker: mqttgo.io:8084 ， ClientID: MQTTGO-9511964930</div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-800/60 py-4 text-center text-xs text-slate-500">
+        MQTTGO.io Web Client Clone & LED Controller &copy; 2026 | Powered by MQTT.js & Tailwind CSS
+    </footer>
+
+    <!-- JavaScript Application Logic -->
+    <script>
+        // Global State
+        let mqttClient = null;
+        let isConnected = false;
+        let currentLedState = false; // false = OFF, true = ON
+        let subscribedTopics = new Set();
+
+        // Cached DOM Elements
+        const statusBadge = document.getElementById('statusBadge');
+        const statusPing = document.getElementById('statusPing');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const btnConnect = document.getElementById('btnConnect');
+        const btnDisconnect = document.getElementById('btnDisconnect');
+        const connectBtnIcon = document.getElementById('connectBtnIcon');
+        const connectBtnText = document.getElementById('connectBtnText');
+
+        const ledBulb = document.getElementById('ledBulb');
+        const ledBulbIcon = document.getElementById('ledBulbIcon');
+        const ledStateText = document.getElementById('ledStateText');
+        const dashToggleSwitch = document.getElementById('dashToggleSwitch');
+        const dashLastPayload = document.getElementById('dashLastPayload');
+        const logConsole = document.getElementById('logConsole');
+        const subList = document.getElementById('subList');
+
+        // On Page Load
+        window.addEventListener('DOMContentLoaded', () => {
+            appendLog('MQTTGO.io 網頁就緒。預設主題：elec4f321/light/LED1', 'info');
+            // Auto connect on startup
+            connectMqtt();
+        });
+
+        function toggleAdvancedSettings() {
+            const adv = document.getElementById('advancedSettings');
+            const advText = document.getElementById('advToggleText');
+            if (adv.classList.contains('hidden')) {
+                adv.classList.remove('hidden');
+                advText.innerText = '隱藏進階設定';
+            } else {
+                adv.classList.add('hidden');
+                advText.innerText = '顯示進階設定';
+            }
+        }
+
+        function handleConnectSubmit(event) {
+            event.preventDefault();
+            if (isConnected) {
+                disconnectMqtt();
+            } else {
+                connectMqtt();
+            }
+        }
+
+        function connectMqtt() {
+            const host = document.getElementById('brokerHost').value.trim();
+            const wssPort = document.getElementById('brokerWssPort').value.trim();
+            const clientId = document.getElementById('clientId').value.trim();
+            const useSsl = document.getElementById('sslEnable').checked;
+            const keepAlive = parseInt(document.getElementById('keepAlive').value, 10) || 60;
+            const cleanSession = document.getElementById('cleanSession').checked;
+
+            const protocol = useSsl ? 'wss' : 'ws';
+            const connectUrl = `${protocol}://${host}:${wssPort}/mqtt`;
+
+            updateConnectionStatus('connecting', '連線中...');
+            appendLog(`發起連線至: ${connectUrl} (ClientID: ${clientId})...`, 'info');
+
+            // Optional Will options
+            const willTopic = document.getElementById('willTopic').value.trim();
+            const willMsg = document.getElementById('willMessage').value.trim();
+            const willQos = parseInt(document.getElementById('willQos').value, 10);
+            const willRetain = document.getElementById('willRetain').value === 'true';
+
+            const options = {
+                clientId: clientId || 'MQTTGO-' + Math.random().toString(16).substring(2, 10),
+                clean: cleanSession,
+                keepalive: keepAlive,
+                connectTimeout: 8000,
+                reconnectPeriod: 4000,
+            };
+
+            if (willTopic && willMsg) {
+                options.will = {
+                    topic: willTopic,
+                    payload: willMsg,
+                    qos: willQos,
+                    retain: willRetain
+                };
+            }
+
+            try {
+                if (mqttClient) {
+                    mqttClient.end(true);
+                }
+
+                mqttClient = mqtt.connect(connectUrl, options);
+
+                mqttClient.on('connect', () => {
+                    isConnected = true;
+                    updateConnectionStatus('connected', '已連線');
+                    updateConnectButtons(true);
+                    appendLog(`成功連接至 Broker (${host}:${wssPort})`, 'success');
+
+                    // Default auto-subscribe to LED topic
+                    const defaultTopic = 'elec4f321/light/LED1';
+                    subscribeTopic(defaultTopic, 0, 'emerald');
+                });
+
+                mqttClient.on('message', (topic, message, packet) => {
+                    const msgStr = message.toString().trim();
+                    appendLog(`接收 [${topic}] (QoS ${packet.qos}): ${msgStr}`, 'receive');
+                    
+                    // Update dashboard readout
+                    dashLastPayload.innerText = msgStr;
+
+                    // If received on the LED topic, update LED state UI
+                    if (topic === 'elec4f321/light/LED1' || topic === document.getElementById('pubTopic').value.trim()) {
+                        parseIncomingLedState(msgStr);
+                    }
+                });
+
+                mqttClient.on('error', (err) => {
+                    appendLog(`MQTT 錯誤: ${err.message || err}`, 'error');
+                });
+
+                mqttClient.on('close', () => {
+                    if (isConnected) {
+                        isConnected = false;
+                        updateConnectionStatus('disconnected', '連線中斷');
+                        updateConnectButtons(false);
+                        appendLog('與 MQTT Broker 的連線已斷開', 'warn');
+                    }
+                });
+
+            } catch (err) {
+                appendLog(`連線建立例外: ${err.message}`, 'error');
+                updateConnectionStatus('disconnected', '連線失敗');
+            }
+        }
+
+        function disconnectMqtt() {
+            if (mqttClient) {
+                mqttClient.end(false, () => {
+                    isConnected = false;
+                    updateConnectionStatus('disconnected', '已手動中斷');
+                    updateConnectButtons(false);
+                    appendLog('已手動中斷 MQTT 連線', 'warn');
+                });
+            }
+        }
+
+        function sendLedCommand(command) {
+            const topic = 'elec4f321/light/LED1';
+            publishMessage(topic, command, 0, false);
+        }
+
+        function toggleLedCommand() {
+            const nextState = currentLedState ? 'off' : 'on';
+            sendLedCommand(nextState);
+        }
+
+        function publishCustomMessage() {
+            const topic = document.getElementById('pubTopic').value.trim();
+            const message = document.getElementById('pubMessage').value.trim();
+            const qos = parseInt(document.getElementById('pubQos').value, 10);
+            const retain = document.getElementById('pubRetain').value === 'true';
+
+            if (!topic) {
+                appendLog('請輸入有效的推播 Topic', 'warn');
+                return;
+            }
+
+            publishMessage(topic, message, qos, retain);
+        }
+
+        function publishMessage(topic, payload, qos = 0, retain = false) {
+            if (!mqttClient || !isConnected) {
+                appendLog(`[未連線] 模擬本地發送至 ${topic}: ${payload}`, 'warn');
+                parseIncomingLedState(payload);
+                return;
+            }
+
+            mqttClient.publish(topic, payload, { qos, retain }, (err) => {
+                if (err) {
+                    appendLog(`發送失敗 [${topic}]: ${err.message}`, 'error');
+                } else {
+                    appendLog(`發送 [${topic}] (QoS ${qos}, Retain ${retain}): ${payload}`, 'send');
+                    // Update state locally
+                    parseIncomingLedState(payload);
+                }
+            });
+        }
+
+        function handleAddSubscription(event) {
+            event.preventDefault();
+            const topic = document.getElementById('subTopicInput').value.trim();
+            const qos = parseInt(document.getElementById('subQosSelect').value, 10);
+            const color = document.getElementById('subColorSelect').value;
+
+            if (topic) {
+                subscribeTopic(topic, qos, color);
+            }
+        }
+
+        function subscribeTopic(topic, qos = 0, color = 'indigo') {
+            if (!mqttClient || !isConnected) {
+                appendLog(`[未連線] 預先登記訂閱主題: ${topic}`, 'warn');
+                addTopicToUIList(topic, qos, color);
+                return;
+            }
+
+            mqttClient.subscribe(topic, { qos }, (err, granted) => {
+                if (!err) {
+                    subscribedTopics.add(topic);
+                    addTopicToUIList(topic, qos, color);
+                    appendLog(`已成功訂閱主題: ${topic} (QoS ${qos})`, 'success');
+                } else {
+                    appendLog(`訂閱失敗 [${topic}]: ${err.message}`, 'error');
+                }
+            });
+        }
+
+        function unsubscribeTopic(topic) {
+            if (mqttClient && isConnected) {
+                mqttClient.unsubscribe(topic, (err) => {
+                    if (!err) {
+                        subscribedTopics.delete(topic);
+                        removeTopicFromUIList(topic);
+                        appendLog(`已取消訂閱主題: ${topic}`, 'info');
+                    } else {
+                        appendLog(`取消訂閱失敗: ${err.message}`, 'error');
+                    }
+                });
+            } else {
+                subscribedTopics.delete(topic);
+                removeTopicFromUIList(topic);
+            }
+        }
+
+        function parseIncomingLedState(msg) {
+            const clean = msg.toUpperCase();
+            if (['ON', '1', 'TRUE', 'HIGH', 'OPEN'].includes(clean)) {
+                updateLedUI(true);
+            } else if (['OFF', '0', 'FALSE', 'LOW', 'CLOSE'].includes(clean)) {
+                updateLedUI(false);
+            }
+        }
+
+        function updateLedUI(turnOn) {
+            currentLedState = turnOn;
+            dashToggleSwitch.checked = turnOn;
+
+            if (turnOn) {
+                ledBulb.classList.remove('led-off');
+                ledBulb.classList.add('led-on');
+                ledBulbIcon.classList.remove('text-slate-600');
+                ledBulbIcon.classList.add('text-white');
+                ledStateText.innerText = '亮起中 (ON)';
+                ledStateText.className = 'text-2xl font-bold tracking-tight text-emerald-400 drop-shadow-md';
+            } else {
+                ledBulb.classList.remove('led-on');
+                ledBulb.classList.add('led-off');
+                ledBulbIcon.classList.remove('text-white');
+                ledBulbIcon.classList.add('text-slate-600');
+                ledStateText.innerText = '熄滅中 (OFF)';
+                ledStateText.className = 'text-2xl font-bold tracking-tight text-slate-400';
+            }
+        }
+
+        function handleDashToggleChange() {
+            const command = dashToggleSwitch.checked ? 'on' : 'off';
+            sendLedCommand(command);
+        }
+
+        function addTopicToUIList(topic, qos, color) {
+            if (document.getElementById(`sub-item-${cssSafeId(topic)}`)) return;
+
+            const colorClasses = {
+                indigo: 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300',
+                emerald: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
+                amber: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+                rose: 'border-rose-500/30 bg-rose-500/10 text-rose-300',
+            }[color] || 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300';
+
+            const div = document.createElement('div');
+            div.id = `sub-item-${cssSafeId(topic)}`;
+            div.className = `flex items-center justify-between p-2.5 rounded-xl border ${colorClasses} text-xs font-mono`;
+            div.innerHTML = `
+                <div class="flex items-center space-x-2 truncate pr-2">
+                    <i class="fa-solid fa-tag"></i>
+                    <span class="font-bold truncate">${escapeHtml(topic)}</span>
+                    <span class="opacity-60 text-[10px]">QoS:${qos}</span>
+                </div>
+                <button onclick="unsubscribeTopic('${escapeJsString(topic)}')" title="取消訂閱" class="text-slate-400 hover:text-rose-400 p-1 transition-colors">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            `;
+            subList.appendChild(div);
+        }
+
+        function removeTopicFromUIList(topic) {
+            const el = document.getElementById(`sub-item-${cssSafeId(topic)}`);
+            if (el) el.remove();
+        }
+
+        function saveDashboardSettings() {
+            appendLog('Dashboard 設定已保存至本地快取 (LocalStorage)', 'success');
+        }
+
+        function updateConnectionStatus(state, text) {
+            statusText.innerText = text;
+            if (state === 'connected') {
+                statusBadge.className = "flex items-center space-x-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-medium";
+                statusPing.className = "animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75";
+                statusDot.className = "relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500";
+            } else if (state === 'connecting') {
+                statusBadge.className = "flex items-center space-x-2 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-medium";
+                statusPing.className = "animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75";
+                statusDot.className = "relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500";
+            } else {
+                statusBadge.className = "flex items-center space-x-2 px-3 py-1.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-medium";
+                statusPing.className = "hidden";
+                statusDot.className = "relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500";
+            }
+        }
+
+        function updateConnectButtons(connected) {
+            if (connected) {
+                btnConnect.disabled = true;
+                btnConnect.className = "px-6 py-2.5 rounded-xl font-bold text-slate-400 bg-slate-800 border border-slate-700 opacity-50 cursor-not-allowed flex items-center space-x-2";
+                btnDisconnect.disabled = false;
+                btnDisconnect.className = "px-6 py-2.5 rounded-xl font-bold text-white bg-rose-600 hover:bg-rose-500 border border-rose-500 shadow-lg shadow-rose-950/40 active:scale-95 transition-all flex items-center space-x-2";
+            } else {
+                btnConnect.disabled = false;
+                btnConnect.className = "px-6 py-2.5 rounded-xl font-bold text-white bg-indigo-600 hover:bg-indigo-500 border border-indigo-500/50 shadow-lg shadow-indigo-950/40 active:scale-95 transition-all flex items-center space-x-2";
+                btnDisconnect.disabled = true;
+                btnDisconnect.className = "px-6 py-2.5 rounded-xl font-bold text-slate-400 bg-slate-800/50 hover:bg-slate-800 border border-slate-700/60 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center space-x-2";
+            }
+        }
+
+        function appendLog(message, type = 'info') {
+            const now = new Date();
+            const timeStr = now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3, '0');
+            
+            const div = document.createElement('div');
+            let colorStyle = 'text-slate-400';
+            let prefix = '[資訊]';
+
+            switch (type) {
+                case 'send':
+                    colorStyle = 'text-indigo-400';
+                    prefix = '[發送 →]';
+                    break;
+                case 'receive':
+                    colorStyle = 'text-emerald-400';
+                    prefix = '[接收 ←]';
+                    break;
+                case 'success':
+                    colorStyle = 'text-teal-300';
+                    prefix = '[成功]';
+                    break;
+                case 'warn':
+                    colorStyle = 'text-amber-400';
+                    prefix = '[警告]';
+                    break;
+                case 'error':
+                    colorStyle = 'text-rose-400';
+                    prefix = '[錯誤]';
+                    break;
+            }
+
+            div.className = `${colorStyle} break-all`;
+            div.innerHTML = `<span class="text-slate-600 mr-2">[${timeStr}]</span><span class="font-semibold mr-1.5">${prefix}</span>${escapeHtml(message)}`;
+            
+            logConsole.appendChild(div);
+
+            if (document.getElementById('autoScroll').checked) {
+                logConsole.scrollTop = logConsole.scrollHeight;
+            }
+        }
+
+        function clearConsoleLogs() {
+            logConsole.innerHTML = '';
+            appendLog('日誌紀錄已清除', 'info');
+        }
+
+        function cssSafeId(str) {
+            return str.replace(/[^a-zA-Z0-9_-]/g, '_');
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function escapeJsString(str) {
+            return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        }
+    </script>
+</body>
+</html>
